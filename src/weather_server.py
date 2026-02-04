@@ -70,8 +70,34 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 message_queue: asyncio.Queue = asyncio.Queue()
 
 async def handle_sse_endpoint(request: Request):
-    """Handle SSE endpoint - streams events to client"""
+    """Handle SSE endpoint - streams events to client or handles POST messages"""
 
+    # Handle POST requests (MCP messages)
+    if request.method == "POST":
+        try:
+            data = await request.json()
+            print(f"Received POST to /sse: {data}")
+
+            # Simple JSON-RPC response
+            response_data = {
+                "jsonrpc": "2.0",
+                "id": data.get("id"),
+                "result": {"status": "ok", "message": "received"}
+            }
+
+            return Response(
+                content=json.dumps(response_data),
+                media_type="application/json"
+            )
+        except Exception as e:
+            print(f"Error handling POST: {e}")
+            return Response(
+                content=json.dumps({"error": str(e)}),
+                status_code=500,
+                media_type="application/json"
+            )
+
+    # Handle GET requests (SSE stream)
     async def event_stream():
         try:
             while True:
@@ -145,7 +171,7 @@ app = Starlette(
     debug=True,
     routes=[
         Route("/", root, methods=["GET"]),
-        Route("/sse", handle_sse_endpoint, methods=["GET"]),
+        Route("/sse", handle_sse_endpoint, methods=["GET", "POST"]),
         Route("/messages", handle_messages, methods=["POST"]),
         Route("/health", health_check, methods=["GET"]),
     ]
