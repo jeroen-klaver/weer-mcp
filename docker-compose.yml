@@ -1,0 +1,9 @@
+
+
+services:
+  weather-mcp:
+    build: .
+    container_name: weather-mcp-server
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
