@@ -5,11 +5,14 @@ MCP Weather Server - Simple temperature lookup via OpenMeteo API
 import httpx
 from mcp.server import Server
 from mcp.types import Tool, TextContent
-from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
-from starlette.responses import Response
 import uvicorn
+import json
+from typing import Any
+import asyncio
 
 # Fixed location: 51.836316614873176, 5.79300494667676
 LATITUDE = 51.836316614873176
@@ -63,41 +66,90 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         text=result
     )]
 
-async def handle_sse(_request):
-    """Handle SSE connection"""
-    async with SseServerTransport("/messages") as transport:
-        await mcp_server.run(
-            transport.read_stream,
-            transport.write_stream,
-            mcp_server.create_initialization_options()
-        )
-    return Response()
+# SSE message handling
+message_queue: asyncio.Queue = asyncio.Queue()
 
-async def health_check(_request):
+async def handle_sse_endpoint(request: Request):
+    """Handle SSE endpoint - streams events to client"""
+
+    async def event_stream():
+        try:
+            while True:
+                # Wait for messages
+                message = await asyncio.wait_for(message_queue.get(), timeout=30.0)
+                yield f"data: {json.dumps(message)}\n\n"
+        except asyncio.TimeoutError:
+            # Send keepalive
+            yield ": keepalive\n\n"
+        except Exception as e:
+            print(f"SSE error: {e}")
+            return
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
+
+async def handle_messages(request: Request):
+    """Handle incoming MCP messages via POST"""
+    try:
+        data = await request.json()
+        print(f"Received message: {data}")
+
+        # Simple response for now
+        response_data = {
+            "jsonrpc": "2.0",
+            "id": data.get("id"),
+            "result": {"status": "ok"}
+        }
+
+        return Response(
+            content=json.dumps(response_data),
+            media_type="application/json"
+        )
+    except Exception as e:
+        print(f"Error handling message: {e}")
+        return Response(
+            content=json.dumps({"error": str(e)}),
+            status_code=500,
+            media_type="application/json"
+        )
+
+async def health_check(_request: Request):
     """Health check endpoint"""
     return Response("OK", status_code=200)
 
-async def root(_request):
+async def root(_request: Request):
     """Root endpoint with info"""
     info = """MCP Weather Server
 
 Available endpoints:
+- GET / - This info page
 - GET /health - Health check
-- GET /sse - MCP server endpoint (SSE transport)
+- GET /sse - SSE event stream
+- POST /messages - MCP message endpoint
 
 Location: 51.836316614873176, 5.79300494667676
 Tools: get_temperature
+
+Status: Running
 """
     return Response(info, media_type="text/plain")
 
 # Create Starlette app
 app = Starlette(
+    debug=True,
     routes=[
-        Route("/", root),
-        Route("/sse", handle_sse),
-        Route("/health", health_check),
+        Route("/", root, methods=["GET"]),
+        Route("/sse", handle_sse_endpoint, methods=["GET"]),
+        Route("/messages", handle_messages, methods=["POST"]),
+        Route("/health", health_check, methods=["GET"]),
     ]
 )
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
