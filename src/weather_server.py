@@ -76,14 +76,99 @@ async def handle_sse_endpoint(request: Request):
     if request.method == "POST":
         try:
             data = await request.json()
-            print(f"Received POST to /sse: {data}")
+            method = data.get("method")
+            print(f"Received MCP request: {method}")
 
-            # Simple JSON-RPC response
-            response_data = {
-                "jsonrpc": "2.0",
-                "id": data.get("id"),
-                "result": {"status": "ok", "message": "received"}
-            }
+            # Handle different MCP methods
+            if method == "initialize":
+                response_data = {
+                    "jsonrpc": "2.0",
+                    "id": data.get("id"),
+                    "result": {
+                        "protocolVersion": "2025-11-25",
+                        "capabilities": {
+                            "tools": {}
+                        },
+                        "serverInfo": {
+                            "name": "weather-server",
+                            "version": "1.0.0"
+                        }
+                    }
+                }
+
+            elif method == "tools/list":
+                response_data = {
+                    "jsonrpc": "2.0",
+                    "id": data.get("id"),
+                    "result": {
+                        "tools": [
+                            {
+                                "name": "get_temperature",
+                                "description": f"Get current temperature for location ({LATITUDE}, {LONGITUDE}) via OpenMeteo API",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {},
+                                    "required": []
+                                }
+                            }
+                        ]
+                    }
+                }
+
+            elif method == "tools/call":
+                tool_name = data.get("params", {}).get("name")
+                print(f"Calling tool: {tool_name}")
+
+                if tool_name == "get_temperature":
+                    # Call OpenMeteo API
+                    async with httpx.AsyncClient() as client:
+                        api_response = await client.get(
+                            "https://api.open-meteo.com/v1/forecast",
+                            params={
+                                "latitude": LATITUDE,
+                                "longitude": LONGITUDE,
+                                "current": "temperature_2m",
+                                "timezone": "Europe/Amsterdam"
+                            }
+                        )
+                        api_response.raise_for_status()
+                        api_data = api_response.json()
+
+                    temp = api_data["current"]["temperature_2m"]
+                    unit = api_data["current_units"]["temperature_2m"]
+                    result_text = f"Current temperature: {temp}{unit}"
+
+                    response_data = {
+                        "jsonrpc": "2.0",
+                        "id": data.get("id"),
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": result_text
+                                }
+                            ]
+                        }
+                    }
+                else:
+                    response_data = {
+                        "jsonrpc": "2.0",
+                        "id": data.get("id"),
+                        "error": {
+                            "code": -32601,
+                            "message": f"Unknown tool: {tool_name}"
+                        }
+                    }
+
+            else:
+                response_data = {
+                    "jsonrpc": "2.0",
+                    "id": data.get("id"),
+                    "error": {
+                        "code": -32601,
+                        "message": f"Unknown method: {method}"
+                    }
+                }
 
             return Response(
                 content=json.dumps(response_data),
@@ -91,8 +176,17 @@ async def handle_sse_endpoint(request: Request):
             )
         except Exception as e:
             print(f"Error handling POST: {e}")
+            import traceback
+            traceback.print_exc()
             return Response(
-                content=json.dumps({"error": str(e)}),
+                content=json.dumps({
+                    "jsonrpc": "2.0",
+                    "id": data.get("id") if "data" in locals() else None,
+                    "error": {
+                        "code": -32603,
+                        "message": str(e)
+                    }
+                }),
                 status_code=500,
                 media_type="application/json"
             )
