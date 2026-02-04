@@ -15,7 +15,7 @@ Een MCP (Model Context Protocol) server maken in een Docker container die temper
 ### 2. MCP Server Implementation
 - [x] Implementeer MCP server met OpenMeteo tool
 - [x] Maak functie om temperatuur op te halen voor gegeven locatie
-- [ ] Test de server lokaal
+- [x] Test de server lokaal
 
 ### 3. Docker Setup
 - [x] Maak Dockerfile
@@ -24,7 +24,7 @@ Een MCP (Model Context Protocol) server maken in een Docker container die temper
 
 ### 4. OpenWebUI Integratie
 - [x] Documenteer hoe OpenWebUI de MCP server kan verbinden
-- [ ] Test de verbinding
+- [x] Test de verbinding
 
 ### 5. Documentatie
 - [x] README met instructies
@@ -81,15 +81,27 @@ Een MCP (Model Context Protocol) server maken in een Docker container die temper
 - **Robuust:** Gebruikt async/await voor non-blocking API calls
 - **Container:** Draait continu, altijd beschikbaar voor OpenWebUI
 - **Configuratie:** Vaste locatie gecodeerd (51.836316614873176, 5.79300494667676)
+- **MCP Protocol:** Correct geïmplementeerd via HTTP/SSE met JSON-RPC
 
-### Volgende Stappen voor Gebruik
-1. Build: `docker-compose build`
-2. Start: `docker-compose up -d`
-3. Configureer OpenWebUI om MCP server te gebruiken
-4. Test de verbinding
+### MCP Protocol Implementatie
+De server ondersteunt de volgende MCP methods:
+- `initialize` - Handshake met OpenWebUI, stuurt server capabilities
+- `tools/list` - Geeft lijst van beschikbare tools (get_temperature)
+- `tools/call` - Voert de get_temperature tool uit en haalt real-time data van OpenMeteo
 
-### Mogelijke Verbeteringen (indien nodig)
-- HTTP/SSE endpoint toevoegen als OpenWebUI geen stdio ondersteunt
+### Status: ✅ COMPLEET EN WERKEND
+- Container draait op poort 8000
+- Succesvol getest met OpenWebUI
+- Temperatuur data wordt correct opgehaald (3.8°C gerapporteerd)
+- MCP protocol communicatie werkt foutloos
+
+### Gebruik
+1. **Start de server:** `docker-compose up -d`
+2. **Voeg toe aan OpenWebUI:** Type: "MCP Streamable HTTP", URL: `http://192.168.x.x:8000/sse`
+3. **Vraag het weer:** "Wat is de huidige temperatuur?"
+
+### Mogelijke Uitbreidingen (toekomst)
 - Meerdere locaties ondersteunen via parameters
-- Meer weer-informatie (luchtvochtigheid, wind, etc.)
-- Error handling en logging verbeteren
+- Meer weer-informatie (luchtvochtigheid, wind, neerslag)
+- 5-daagse weersverwachting
+- Locatie configureerbaar via environment variables

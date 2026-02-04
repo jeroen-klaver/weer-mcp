@@ -18,6 +18,38 @@ import asyncio
 LATITUDE = 51.836316614873176
 LONGITUDE = 5.79300494667676
 
+# Weather code descriptions (WMO codes)
+WEATHER_CODES = {
+    0: "Helder",
+    1: "Overwegend helder",
+    2: "Gedeeltelijk bewolkt",
+    3: "Bewolkt",
+    45: "Mist",
+    48: "Aanvriezende mist",
+    51: "Lichte motregen",
+    53: "Matige motregen",
+    55: "Dichte motregen",
+    61: "Lichte regen",
+    63: "Matige regen",
+    65: "Zware regen",
+    71: "Lichte sneeuw",
+    73: "Matige sneeuw",
+    75: "Zware sneeuw",
+    77: "Sneeuwkorrels",
+    80: "Lichte buien",
+    81: "Matige buien",
+    82: "Zware buien",
+    85: "Lichte sneeuwbuien",
+    86: "Zware sneeuwbuien",
+    95: "Onweer",
+    96: "Onweer met lichte hagel",
+    99: "Onweer met zware hagel"
+}
+
+def get_weather_description(code: int) -> str:
+    """Get Dutch weather description from WMO code"""
+    return WEATHER_CODES.get(code, "Onbekend")
+
 mcp_server = Server("weather-server")
 
 @mcp_server.list_tools()
@@ -91,7 +123,7 @@ async def handle_sse_endpoint(request: Request):
                         },
                         "serverInfo": {
                             "name": "weather-server",
-                            "version": "1.0.0"
+                            "version": "2.0.0"
                         }
                     }
                 }
@@ -110,6 +142,24 @@ async def handle_sse_endpoint(request: Request):
                                     "properties": {},
                                     "required": []
                                 }
+                            },
+                            {
+                                "name": "get_current_weather",
+                                "description": f"Get detailed current weather including temperature, humidity, wind, and precipitation for location ({LATITUDE}, {LONGITUDE})",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {},
+                                    "required": []
+                                }
+                            },
+                            {
+                                "name": "get_forecast",
+                                "description": f"Get 5-day weather forecast for location ({LATITUDE}, {LONGITUDE})",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {},
+                                    "required": []
+                                }
                             }
                         ]
                     }
@@ -120,7 +170,7 @@ async def handle_sse_endpoint(request: Request):
                 print(f"Calling tool: {tool_name}")
 
                 if tool_name == "get_temperature":
-                    # Call OpenMeteo API
+                    # Call OpenMeteo API - simple temperature
                     async with httpx.AsyncClient() as client:
                         api_response = await client.get(
                             "https://api.open-meteo.com/v1/forecast",
@@ -150,6 +200,94 @@ async def handle_sse_endpoint(request: Request):
                             ]
                         }
                     }
+
+                elif tool_name == "get_current_weather":
+                    # Call OpenMeteo API - detailed weather
+                    async with httpx.AsyncClient() as client:
+                        api_response = await client.get(
+                            "https://api.open-meteo.com/v1/forecast",
+                            params={
+                                "latitude": LATITUDE,
+                                "longitude": LONGITUDE,
+                                "current": "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_direction_10m",
+                                "timezone": "Europe/Amsterdam"
+                            }
+                        )
+                        api_response.raise_for_status()
+                        api_data = api_response.json()
+
+                    current = api_data["current"]
+
+                    # Wind direction conversion
+                    wind_dir = current["wind_direction_10m"]
+                    directions = ["N", "NO", "O", "ZO", "Z", "ZW", "W", "NW"]
+                    wind_dir_text = directions[int((wind_dir + 22.5) / 45) % 8]
+
+                    result_text = f"""Actueel weer:
+🌡️ Temperatuur: {current['temperature_2m']}°C (voelt als {current['apparent_temperature']}°C)
+💧 Luchtvochtigheid: {current['relative_humidity_2m']}%
+🌧️ Neerslag: {current['precipitation']} mm
+💨 Wind: {current['wind_speed_10m']} km/u {wind_dir_text}
+☁️ Conditie: {get_weather_description(current['weather_code'])}"""
+
+                    response_data = {
+                        "jsonrpc": "2.0",
+                        "id": data.get("id"),
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": result_text
+                                }
+                            ]
+                        }
+                    }
+
+                elif tool_name == "get_forecast":
+                    # Call OpenMeteo API - 5-day forecast
+                    async with httpx.AsyncClient() as client:
+                        api_response = await client.get(
+                            "https://api.open-meteo.com/v1/forecast",
+                            params={
+                                "latitude": LATITUDE,
+                                "longitude": LONGITUDE,
+                                "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code",
+                                "timezone": "Europe/Amsterdam",
+                                "forecast_days": 5
+                            }
+                        )
+                        api_response.raise_for_status()
+                        api_data = api_response.json()
+
+                    daily = api_data["daily"]
+                    forecast_lines = ["5-daagse weersverwachting:\n"]
+
+                    for i in range(5):
+                        date = daily["time"][i]
+                        temp_max = daily["temperature_2m_max"][i]
+                        temp_min = daily["temperature_2m_min"][i]
+                        precip = daily["precipitation_sum"][i]
+                        weather = get_weather_description(daily["weather_code"][i])
+
+                        forecast_lines.append(
+                            f"{date}: {weather}, {temp_min}°C - {temp_max}°C, neerslag: {precip}mm"
+                        )
+
+                    result_text = "\n".join(forecast_lines)
+
+                    response_data = {
+                        "jsonrpc": "2.0",
+                        "id": data.get("id"),
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": result_text
+                                }
+                            ]
+                        }
+                    }
+
                 else:
                     response_data = {
                         "jsonrpc": "2.0",
@@ -245,16 +383,20 @@ async def health_check(_request: Request):
 
 async def root(_request: Request):
     """Root endpoint with info"""
-    info = """MCP Weather Server
+    info = """MCP Weather Server v2.0
 
 Available endpoints:
 - GET / - This info page
 - GET /health - Health check
-- GET /sse - SSE event stream
+- GET /sse - SSE event stream (MCP)
 - POST /messages - MCP message endpoint
 
-Location: 51.836316614873176, 5.79300494667676
-Tools: get_temperature
+Location: 51.836316614873176, 5.79300494667676 (Nederland)
+
+Available Tools:
+- get_temperature - Simpele temperatuur opvragen
+- get_current_weather - Uitgebreid actueel weer (temp, vocht, wind, neerslag)
+- get_forecast - 5-daagse weersverwachting
 
 Status: Running
 """
